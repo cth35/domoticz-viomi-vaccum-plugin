@@ -14,7 +14,7 @@ from gevent.queue import Queue
 from gevent.pool import Group
 from gevent.server import StreamServer
 import argparse
-from miio import Vacuum, DeviceException
+from miio import ViomiVacuum, DeviceException
 from msgpack import Unpacker
 import time
 import signal
@@ -91,7 +91,7 @@ def socket_msg_sender(sockets, q):
 
 
 def vacuum_commands_handler(ip, token, q):
-    vac = Vacuum(ip, token, 0)
+    vac = ViomiVacuum(ip, token, 0)
     vac.manual_seqnum = 0
 
     while True:
