@@ -122,10 +122,10 @@ class VacuumCommand(object):
             }
 
         return {
-            'error': res.error if res.error_code else None,
-            'state_code': res.state_code,
+            'error': res.error,
+            'state_code': res.state.value,
             'battery': res.battery,
-            'fan_level': res.fanspeed,
+            'fan_level': res.fanspeed.value,
             'clean_seconds': res.data["clean_time"],
             'clean_area': res.clean_area
         }
@@ -133,6 +133,10 @@ class VacuumCommand(object):
     @classmethod
     def start(cls, vac):
         return {'code': vac.start()}
+
+    @classmethod
+    def start_with_room(cls, vac, room):
+        return {'code': vac.start_with_room(room)}
 
     @classmethod
     def stop(cls, vac):

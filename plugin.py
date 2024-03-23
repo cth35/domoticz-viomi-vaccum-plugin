@@ -1,7 +1,8 @@
-#       
+#
 #       Xiaomi Mi Robot Vacuum Plugin
 #       Author: mrin, 2017
-#       
+#       Modified for Viomi Model: cth35, 2024  
+#
 """
 <plugin key="xiaomi-mi-robot-vacuum" name="Xiaomi Mi Robot Vacuum" author="mrin" version="0.1.3" wikilink="https://github.com/mrin/domoticz-mirobot-plugin" externallink="">
     <params>
@@ -26,6 +27,7 @@
 
 import os
 import sys
+from enum import IntEnum
 
 module_paths = [x[0] for x in os.walk( os.path.join(os.path.dirname(__file__), '.', '.env/lib/') ) if x[0].endswith('site-packages') ]
 for mp in module_paths:
@@ -37,14 +39,14 @@ import msgpack
 
 class BasePlugin:
     controlOptions = {
-        "LevelActions": "||||||",
-        "LevelNames": "Off|Clean|Home|Spot|Pause|Stop|Find",
+        "LevelActions": "|||||",
+        "LevelNames": "Off|Clean|Home|Room|Pause|Stop",
         "LevelOffHidden": "true",
         "SelectorStyle": "0"
     }
     fanOptions = {
         "LevelActions": "||||",
-        "LevelNames": "Off|Quiet|Balanced|Turbo|Max",
+        "LevelNames": "Off|Quiet|Standard|Medium|Turbo",
         "LevelOffHidden": "true",
         "SelectorStyle": "0"
     }
@@ -69,30 +71,37 @@ class BasePlugin:
     cSensorsUnit = 8
     cFilterUnit = 9
     cResetControlUnit = 10
+    errorUnit = 11
 
     # statuses by protocol
     # https://github.com/marcelrv/XiaomiRobotVacuumProtocol/blob/master/StatusMessage.md
-    states = {
-        0: 'Unknown 0',
-        1: 'Initiating',
-        2: 'Sleeping',
-        3: 'Waiting',
-        4: 'Unknown 4',
-        5: 'Cleaning',
-        6: 'Back to home',
-        7: 'Manual mode',
-        8: 'Charging',
-        9: 'Charging Error',
-        10: 'Paused',
-        11: 'Spot cleaning',
-        12: 'In Error',
-        13: 'Shutting down',
-        14: 'Updating',
-        15: 'Docking',
-        17: 'Zone cleaning',
-        100: 'Full'
-    }
 
+    class States(IntEnum):
+        Unknown = -1
+        Idle_Not_Docked = 0
+        Idle = 1
+        Paused = 2
+        Cleaning = 3        
+        Back = 4
+        Docked = 5
+        Vaccuming_and_mopping = 6
+        Mopping = 7
+        Waiting = 8
+        SpotCleaning = 3
+        Charging = 9
+
+    states = {
+        States.Unknown: 'Unknown',
+        States.Idle_Not_Docked0: 'Idle Not Docked',
+        States.Idle1: 'Idle',
+        States.Paused: 'Paused',
+        States.Cleaning: 'Cleaning',
+        States.Back: 'Back to home',
+        States.Docked: 'Docked',
+        States.Vaccuming_and_mopping: 'Vaccuming and mopping',
+        States.Mopping: 'Mopping',
+        States.Waiting: 'Waiting'
+    }
 
     def __init__(self):
         self.heartBeatCnt = 0
@@ -117,6 +126,9 @@ class BasePlugin:
 
         if self.statusUnit not in Devices:
             Domoticz.Device(Name='Status', Unit=self.statusUnit, Type=17,  Switchtype=17, Image=iconID).Create()
+
+        if self.errorUnit not in Devices:
+            Domoticz.Device(Name='Error', Unit=self.errorUnit, Type=17,  Switchtype=17, Image=iconID).Create()
 
         if self.controlUnit not in Devices:
             Domoticz.Device(Name='Control', Unit=self.controlUnit, TypeName='Selector Switch',
@@ -174,12 +186,14 @@ class BasePlugin:
                 if result['cmd'] == 'status':
 
                     UpdateDevice(self.statusUnit,
-                                 (1 if result['state_code'] in [5, 6, 11, 17] else 0), # ON is Cleaning, Back to home, Spot cleaning
+                                 (1 if result['state_code'] in [self.States.Cleaning, self.States.Back, self.States.Docked, self.States.Vaccuming_and_mopping] else 0), # ON is Cleaning, Back to home, Spot cleaning
                                  self.states.get(result['state_code'], 'Undefined')
                                  )
 
                     UpdateDevice(self.batteryUnit, result['battery'], str(result['battery']), result['battery'],
                                  AlwaysUpdate=(self.heartBeatCnt % 100 == 0))
+
+                    UpdateDevice(self.errorUnit, 1, result['error'])
 
                     if Parameters['Mode5'] == 'dimmer':
                         UpdateDevice(self.fanDimmerUnit, 2, str(result['fan_level'])) # nValue=2 for show percentage, instead ON/OFF state
@@ -213,42 +227,39 @@ class BasePlugin:
 
         if self.statusUnit == Unit:
             if 'On' == Command and self.isOFF:
-                if self.apiRequest('start'): UpdateDevice(Unit, 1, self.states[5]) # Cleaning
+                if self.apiRequest('start'): UpdateDevice(Unit, 1, self.states[self.States.Cleaning]) # Cleaning
 
             elif 'Off' == Command and self.isON:
-                if sDevice.sValue == self.states[11] and self.apiRequest('pause'): # Stop if Spot cleaning
-                    UpdateDevice(Unit, 0, self.states[3]) # Waiting
+                if sDevice.sValue == self.states[self.States.SpotCleaning] and self.apiRequest('pause'): # Stop if Spot cleaning
+                    UpdateDevice(Unit, 0, self.states[self.States.Waiting]) # Waiting
                 elif self.apiRequest('home'):
-                    UpdateDevice(Unit, 1, self.states[6]) # Back to home
+                    UpdateDevice(Unit, 1, self.states[self.States.Back]) # Back to home
 
         elif self.controlUnit == Unit:
 
             if Level == 10: # Clean
                 if self.apiRequest('start') and self.isOFF:
-                    UpdateDevice(self.statusUnit, 1, self.states[5])  # Cleaning
+                    UpdateDevice(self.statusUnit, 1, self.states[self.States.Cleaning])  # Cleaning
 
             elif Level == 20: # Home
                 if self.apiRequest('home') and sDevice.sValue in [
-                    self.states[5], self.states[3], self.states[10]]: # Cleaning, Waiting, Paused
-                    UpdateDevice(self.statusUnit, 1, self.states[6])  # Back to home
+                    self.states[self.States.Cleaning], self.states[self.States.Waiting], self.states[self.States.Paused]]: # Cleaning, Waiting, Paused
+                    UpdateDevice(self.statusUnit, 1, self.states[self.States.Back])  # Back to home
 
-            elif Level == 30: # Spot
-                if self.apiRequest('spot') and self.isOFF and sDevice.sValue != self.states[8]: # Spot cleaning will not start if Charging
-                    UpdateDevice(self.statusUnit, 1, self.states[11])  # Spot cleaning
+            elif Level == 30: # Room
+                if self.apiRequest('start_with_room','14') and self.isOFF:
+                    UpdateDevice(self.statusUnit, 1, self.states[self.States.Cleaning])  # Room cleaning
 
             elif Level == 40: # Pause
                 if self.apiRequest('pause') and self.isON:
-                    if sDevice.sValue == self.states[11]: # For Spot cleaning - Pause treats as Stop
-                        UpdateDevice(self.statusUnit, 0, self.states[3])  # Waiting
+                    if sDevice.sValue == self.states[self.States.SpotCleaning]: # For Spot cleaning - Pause treats as Stop
+                        UpdateDevice(self.statusUnit, 0, self.states[self.States.Waiting])  # Waiting
                     else:
-                        UpdateDevice(self.statusUnit, 0, self.states[10])  # Paused
+                        UpdateDevice(self.statusUnit, 0, self.states[self.States.Paused])  # Paused
 
             elif Level == 50: # Stop
-                if self.apiRequest('stop') and self.isON and sDevice.sValue not in [self.states[11], self.states[6]]: # Stop doesn't work for Spot cleaning, Back to home
-                    UpdateDevice(self.statusUnit, 0, self.states[3]) # Waiting
-
-            elif Level == 60: # Find
-                self.apiRequest('find')
+                if self.apiRequest('stop') and self.isON and sDevice.sValue not in [self.states[self.States.SpotCleaning], self.states[self.States.Back]]: # Stop doesn't work for Spot cleaning, Back to home
+                    UpdateDevice(self.statusUnit, 0, self.states[self.States.Waiting]) # Waiting
 
         elif self.fanDimmerUnit == Unit and Parameters['Mode5'] == 'dimmer':
             Level = 1 if Level == 0 else 100 if Level > 100 else Level
@@ -396,3 +407,4 @@ def DumpConfigToLog():
         Domoticz.Debug("Device sValue:   '" + Devices[x].sValue + "'")
         Domoticz.Debug("Device LastLevel: " + str(Devices[x].LastLevel))
     return
+
