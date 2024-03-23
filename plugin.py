@@ -247,7 +247,7 @@ class BasePlugin:
                     UpdateDevice(self.statusUnit, 1, self.states[self.States.Back])  # Back to home
 
             elif Level == 30: # Room
-                if self.apiRequest('start_with_room','14') and self.isOFF:
+                if self.apiRequest('start_with_room',['14']) and self.isOFF:
                     UpdateDevice(self.statusUnit, 1, self.states[self.States.Cleaning])  # Room cleaning
 
             elif Level == 40: # Pause
